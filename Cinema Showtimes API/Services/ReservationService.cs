@@ -1,22 +1,19 @@
 using CinemaShowtimesApi.Contracts;
-using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Domain;
 using CinemaShowtimesApi.Errors;
-using Microsoft.EntityFrameworkCore;
+using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;
 
-public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProvider)
+public sealed class ReservationService(IReservationRepository reservationRepository, TimeProvider timeProvider) : IReservationService
 {
-    public async Task<ReservationResponse> ReserveAsync(
-        Guid showtimeId,
-        IReadOnlyList<SeatDto> requestedSeats,
-        CancellationToken cancellationToken)
+    public async Task<ReservationResponse> ReserveAsync(Guid showtimeId, IReadOnlyList<SeatDto> requestedSeats, CancellationToken cancellationToken)
     {
         ValidateRequestedSeats(requestedSeats);
 
         var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await ExpirePendingReservationsAsync(showtimeId, cancellationToken);
+        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
 
         var seats = ResolveSeats(showtime.Auditorium, requestedSeats);
         EnsureSeatsAvailable(showtime, seats.Select(x => x.Id).ToHashSet());
@@ -24,19 +21,14 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
         return await CreateReservationAsync(showtime, seats, cancellationToken);
     }
 
-    public async Task<ReservationResponse> ReserveContiguousAsync(
-        Guid showtimeId,
-        int seatCount,
-        CancellationToken cancellationToken)
+    public async Task<ReservationResponse> ReserveContiguousAsync(Guid showtimeId, int seatCount, CancellationToken cancellationToken)
     {
         var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await ExpirePendingReservationsAsync(showtimeId, cancellationToken);
+        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
 
         var occupied = GetOccupiedSeatIds(showtime);
         var block = FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
-            ?? throw new ConflictException(
-                $"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.",
-                "no_contiguous_block");
+            ?? throw new ConflictException($"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.", "no_contiguous_block");
 
         return await CreateReservationAsync(showtime, block, cancellationToken);
     }
@@ -44,18 +36,8 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
     public async Task<ReservationResponse> ConfirmAsync(Guid reservationReference, CancellationToken cancellationToken)
     {
         var now = UtcNow();
-
-        var reservation = await db.Reservations
-            .Include(x => x.Seats)
-                .ThenInclude(x => x.Seat)
-            .Include(x => x.Showtime)
-                .ThenInclude(x => x.Movie)
-            .Include(x => x.Showtime)
-                .ThenInclude(x => x.Auditorium)
-            .FirstOrDefaultAsync(x => x.Id == reservationReference, cancellationToken)
-            ?? throw new NotFoundException(
-                $"Reservation '{reservationReference}' was not found.",
-                "reservation_not_found");
+        var reservation = await reservationRepository.GetByIdForConfirmAsync(reservationReference, cancellationToken)
+            ?? throw new NotFoundException($"Reservation '{reservationReference}' was not found.", "reservation_not_found");
 
         if (reservation.Status == ReservationStatus.Confirmed)
         {
@@ -67,57 +49,24 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
             if (reservation.Status == ReservationStatus.Pending)
             {
                 reservation.Status = ReservationStatus.Expired;
-                await db.SaveChangesAsync(cancellationToken);
+                await reservationRepository.SaveChangesAsync(cancellationToken);
             }
 
-            throw new ConflictException(
-                "This reservation has expired and can no longer be confirmed.",
-                "reservation_expired");
+            throw new ConflictException("This reservation has expired and can no longer be confirmed.", "reservation_expired");
         }
 
         reservation.Status = ReservationStatus.Confirmed;
-        await db.SaveChangesAsync(cancellationToken);
-
+        await reservationRepository.SaveChangesAsync(cancellationToken);
         return ToResponse(reservation);
     }
 
     private async Task<Showtime> LoadShowtimeAsync(Guid showtimeId, CancellationToken cancellationToken)
     {
-        return await db.Showtimes
-            .Include(x => x.Movie)
-            .Include(x => x.Auditorium)
-                .ThenInclude(x => x.Seats)
-            .Include(x => x.Reservations)
-                .ThenInclude(x => x.Seats)
-                    .ThenInclude(x => x.Seat)
-            .FirstOrDefaultAsync(x => x.Id == showtimeId, cancellationToken)
+        return await reservationRepository.GetShowtimeForBookingAsync(showtimeId, cancellationToken)
             ?? throw new NotFoundException($"Showtime '{showtimeId}' was not found.", "showtime_not_found");
     }
 
-    private async Task ExpirePendingReservationsAsync(Guid showtimeId, CancellationToken cancellationToken)
-    {
-        var now = UtcNow();
-        var expired = await db.Reservations
-            .Where(x => x.ShowtimeId == showtimeId
-                        && x.Status == ReservationStatus.Pending
-                        && x.ExpiresAt <= now)
-            .ToListAsync(cancellationToken);
-
-        foreach (var reservation in expired)
-        {
-            reservation.Status = ReservationStatus.Expired;
-        }
-
-        if (expired.Count > 0)
-        {
-            await db.SaveChangesAsync(cancellationToken);
-        }
-    }
-
-    private async Task<ReservationResponse> CreateReservationAsync(
-        Showtime showtime,
-        IReadOnlyList<Seat> seats,
-        CancellationToken cancellationToken)
+    private async Task<ReservationResponse> CreateReservationAsync(Showtime showtime, IReadOnlyList<Seat> seats, CancellationToken cancellationToken)
     {
         var now = UtcNow();
         var reservation = new Reservation
@@ -134,9 +83,7 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
             reservation.Seats.Add(new ReservationSeat { SeatId = seat.Id, Seat = seat });
         }
 
-        db.Reservations.Add(reservation);
-        await db.SaveChangesAsync(cancellationToken);
-
+        await reservationRepository.AddAsync(reservation, cancellationToken);
         reservation.Showtime = showtime;
         return ToResponse(reservation);
     }
@@ -151,9 +98,7 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
 
         if (duplicates.Count > 0)
         {
-            throw new BusinessRuleException(
-                $"Duplicate seats in the request: {string.Join(", ", duplicates)}.",
-                "duplicate_seats");
+            throw new BusinessRuleException($"Duplicate seats in the request: {string.Join(", ", duplicates)}.", "duplicate_seats");
         }
     }
 
@@ -177,9 +122,7 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
 
         if (missing.Count > 0)
         {
-            throw new BusinessRuleException(
-                $"Seats do not exist in {auditorium.Name}: {string.Join(", ", missing)}.",
-                "unknown_seats");
+            throw new BusinessRuleException($"Seats do not exist in {auditorium.Name}: {string.Join(", ", missing)}.", "unknown_seats");
         }
 
         return resolved;
@@ -207,9 +150,7 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
 
         if (sold.Count > 0)
         {
-            throw new ConflictException(
-                $"Seats already sold: {FormatSeats(sold)}.",
-                "seats_already_sold");
+            throw new ConflictException($"Seats already sold: {FormatSeats(sold)}.", "seats_already_sold");
         }
 
         var reserved = showtime.Reservations
@@ -221,34 +162,22 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
 
         if (reserved.Count > 0)
         {
-            throw new ConflictException(
-                $"Seats currently reserved: {FormatSeats(reserved)}.",
-                "seats_currently_reserved");
+            throw new ConflictException($"Seats currently reserved: {FormatSeats(reserved)}.", "seats_currently_reserved");
         }
     }
 
-    private static List<Seat>? FindContiguousBlock(
-        IEnumerable<Seat> seats,
-        HashSet<Guid> occupied,
-        int seatCount)
+    private static List<Seat>? FindContiguousBlock(IEnumerable<Seat> seats, HashSet<Guid> occupied, int seatCount)
     {
-        var byRow = seats
-            .GroupBy(s => s.Row)
-            .OrderBy(g => g.Key);
+        var byRow = seats.GroupBy(s => s.Row).OrderBy(g => g.Key);
 
         foreach (var row in byRow)
         {
-            var available = row
-                .Where(s => !occupied.Contains(s.Id))
-                .OrderBy(s => s.Number)
-                .ToList();
+            var available = row.Where(s => !occupied.Contains(s.Id)).OrderBy(s => s.Number).ToList();
 
             for (var i = 0; i <= available.Count - seatCount; i++)
             {
                 var candidate = available.Skip(i).Take(seatCount).ToList();
-                var isContiguous = candidate
-                    .Zip(candidate.Skip(1), (left, right) => right.Number == left.Number + 1)
-                    .All(x => x);
+                var isContiguous = candidate.Zip(candidate.Skip(1), (left, right) => right.Number == left.Number + 1).All(x => x);
 
                 if (isContiguous)
                 {
@@ -261,11 +190,7 @@ public sealed class ReservationService(CinemaDbContext db, TimeProvider timeProv
     }
 
     private static string FormatSeats(IEnumerable<Seat> seats) =>
-        string.Join(", ", seats
-            .Where(s => s is not null)
-            .Select(s => $"{s.Row}{s.Number}")
-            .Distinct()
-            .OrderBy(x => x));
+        string.Join(", ", seats.Where(s => s is not null).Select(s => $"{s.Row}{s.Number}").Distinct().OrderBy(x => x));
 
     private static ReservationResponse ToResponse(Reservation reservation)
     {

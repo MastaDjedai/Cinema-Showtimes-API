@@ -1,7 +1,6 @@
 using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Errors;
-using CinemaShowtimesApi.Services;
-using Microsoft.EntityFrameworkCore;
+using CinemaShowtimesApi.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,17 +8,8 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-
-builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddScoped<MovieService>();
-builder.Services.AddScoped<ShowtimeService>();
-builder.Services.AddScoped<ReservationService>();
-
-var connectionString = builder.Configuration.GetConnectionString("Cinema")
-    ?? "Data Source=cinema.db";
-
-builder.Services.AddDbContext<CinemaDbContext>(options =>
-    options.UseSqlite(connectionString));
+builder.Services.AddCinemaApplication(builder.Configuration);
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
@@ -38,5 +28,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseSwagger();
+app.UseSwaggerUI();
+
 app.MapControllers();
 app.Run();

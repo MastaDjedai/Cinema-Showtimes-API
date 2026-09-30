@@ -1,19 +1,17 @@
 using CinemaShowtimesApi.Contracts;
-using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Domain;
-using Microsoft.EntityFrameworkCore;
+using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;
 
-public sealed class MovieService(CinemaDbContext db)
+public sealed class MovieService(IMovieRepository movieRepository) : IMovieService
 {
     public async Task<IReadOnlyList<MovieResponse>> ListAsync(CancellationToken cancellationToken)
     {
-        return await db.Movies
-            .AsNoTracking()
-            .OrderBy(x => x.Title)
-            .Select(x => ToResponse(x))
-            .ToListAsync(cancellationToken);
+        var items = await movieRepository.ListOrderedByTitleAsync(cancellationToken);
+
+        return items.Select(ToResponse).ToList();
     }
 
     public async Task<MovieResponse> CreateAsync(CreateMovieRequest request, CancellationToken cancellationToken)
@@ -27,12 +25,12 @@ public sealed class MovieService(CinemaDbContext db)
             DurationMinutes = request.DurationMinutes
         };
 
-        db.Movies.Add(movie);
-        await db.SaveChangesAsync(cancellationToken);
+        await movieRepository.AddAsync(movie, cancellationToken);
+
         return ToResponse(movie);
     }
 
-    private static MovieResponse ToResponse(Movie movie) => new()
+    private MovieResponse ToResponse(Movie movie) => new()
     {
         Id = movie.Id,
         Title = movie.Title,

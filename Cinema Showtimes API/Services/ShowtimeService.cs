@@ -1,30 +1,22 @@
 using CinemaShowtimesApi.Contracts;
-using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Domain;
 using CinemaShowtimesApi.Errors;
-using Microsoft.EntityFrameworkCore;
+using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;
 
-public sealed class ShowtimeService(CinemaDbContext db, TimeProvider timeProvider)
+public sealed class ShowtimeService(IShowtimeRepository showtimes, TimeProvider timeProvider) : IShowtimeService
 {
     public async Task<IReadOnlyList<AuditoriumResponse>> ListAuditoriumsAsync(CancellationToken cancellationToken)
     {
-        var auditoriums = await db.Auditoriums
-            .AsNoTracking()
-            .Include(x => x.Seats)
-            .OrderBy(x => x.Name)
-            .ToListAsync(cancellationToken);
+        var auditoriums = await showtimes.ListAuditoriumsWithSeatsAsync(cancellationToken);
 
         return auditoriums.Select(a => new AuditoriumResponse
         {
             Id = a.Id,
             Name = a.Name,
-            Seats = a.Seats
-                .OrderBy(s => s.Row)
-                .ThenBy(s => s.Number)
-                .Select(s => new SeatDto { Row = s.Row, Number = s.Number })
-                .ToList()
+            Seats = a.Seats.OrderBy(s => s.Row).ThenBy(s => s.Number).Select(s => new SeatDto { Row = s.Row, Number = s.Number }).ToList()
         }).ToList();
     }
 
@@ -35,10 +27,10 @@ public sealed class ShowtimeService(CinemaDbContext db, TimeProvider timeProvide
             throw new BusinessRuleException("MovieId and AuditoriumId are required.", "missing_ids");
         }
 
-        var movie = await db.Movies.FirstOrDefaultAsync(x => x.Id == request.MovieId, cancellationToken)
+        var movie = await showtimes.GetMovieByIdAsync(request.MovieId, cancellationToken)
             ?? throw new NotFoundException($"Movie '{request.MovieId}' was not found.", "movie_not_found");
 
-        var auditorium = await db.Auditoriums.FirstOrDefaultAsync(x => x.Id == request.AuditoriumId, cancellationToken)
+        var auditorium = await showtimes.GetAuditoriumByIdAsync(request.AuditoriumId, cancellationToken)
             ?? throw new NotFoundException($"Auditorium '{request.AuditoriumId}' was not found.", "auditorium_not_found");
 
         if (request.StartTime <= timeProvider.GetUtcNow())
@@ -46,15 +38,9 @@ public sealed class ShowtimeService(CinemaDbContext db, TimeProvider timeProvide
             throw new BusinessRuleException("Showtime start time must be in the future.", "showtime_in_the_past");
         }
 
-        var overlapping = await db.Showtimes.AnyAsync(
-            x => x.AuditoriumId == request.AuditoriumId && x.StartTime == request.StartTime,
-            cancellationToken);
-
-        if (overlapping)
+        if (await showtimes.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), cancellationToken))
         {
-            throw new ConflictException(
-                "This auditorium already has a showtime at the requested start time.",
-                "showtime_overlap");
+            throw new ConflictException("This auditorium already has a showtime at the requested start time.", "showtime_overlap");
         }
 
         var showtime = new Showtime
@@ -65,8 +51,7 @@ public sealed class ShowtimeService(CinemaDbContext db, TimeProvider timeProvide
             StartTime = request.StartTime.ToUniversalTime()
         };
 
-        db.Showtimes.Add(showtime);
-        await db.SaveChangesAsync(cancellationToken);
+        await showtimes.AddAsync(showtime, cancellationToken);
 
         return new ShowtimeResponse
         {
