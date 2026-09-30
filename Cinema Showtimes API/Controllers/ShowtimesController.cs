@@ -15,7 +15,7 @@ public sealed class ShowtimesController(IShowtimeService showtimeService, IReser
         return Ok(await showtimeService.ListAuditoriumsAsync(cancellationToken));
     }
 
-    [HttpPost("showtimeService")]
+    [HttpPost("showtimes")]
     [ProducesResponseType(typeof(ShowtimeResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -25,10 +25,10 @@ public sealed class ShowtimesController(IShowtimeService showtimeService, IReser
     {
         var showtime = await showtimeService.CreateAsync(request, cancellationToken);
 
-        return Created($"/api/showtimeService/{showtime.Id}", showtime);
+        return StatusCode(StatusCodes.Status201Created, showtime);
     }
 
-    [HttpPost("showtimeService/{showtimeId:guid}/reservationService")]
+    [HttpPost("showtimes/{showtimeId:guid}/reservations")]
     [ProducesResponseType(typeof(ReservationResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -38,10 +38,10 @@ public sealed class ShowtimesController(IShowtimeService showtimeService, IReser
     {
         var reservation = await reservationService.ReserveAsync(showtimeId, request.Seats, cancellationToken);
 
-        return Created($"/api/reservationService/{reservation.ReservationReference}", reservation);
+        return StatusCode(StatusCodes.Status201Created, reservation);
     }
 
-    [HttpPost("showtimeService/{showtimeId:guid}/reservationService/contiguous")]
+    [HttpPost("showtimes/{showtimeId:guid}/reservations/contiguous")]
     [ProducesResponseType(typeof(ReservationResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -50,6 +50,6 @@ public sealed class ShowtimesController(IShowtimeService showtimeService, IReser
     {
         var reservation = await reservationService.ReserveContiguousAsync(showtimeId, request.SeatCount, cancellationToken);
 
-        return Created($"/api/reservationService/{reservation.ReservationReference}", reservation);
+        return StatusCode(StatusCodes.Status201Created, reservation);
     }
 }

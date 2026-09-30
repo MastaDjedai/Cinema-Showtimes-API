@@ -1,5 +1,6 @@
 using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Repositories.Interfaces;
 using CinemaShowtimesApi.Services;
 using CinemaShowtimesApi.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;

@@ -21,6 +21,7 @@ public sealed class MoviesController(IMovieService movies) : ControllerBase
     public async Task<ActionResult<MovieResponse>> Create([FromBody] CreateMovieRequest request, CancellationToken cancellationToken)
     {
         var movie = await movies.CreateAsync(request, cancellationToken);
-        return Created($"/api/movies/{movie.Id}", movie);
+
+        return StatusCode(StatusCodes.Status201Created, movie);
     }
 }

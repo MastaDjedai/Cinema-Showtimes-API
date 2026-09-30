@@ -1,5 +1,6 @@
 using CinemaShowtimesApi.Data;
 using CinemaShowtimesApi.Domain;
+using CinemaShowtimesApi.Repositories.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace CinemaShowtimesApi.Repositories;

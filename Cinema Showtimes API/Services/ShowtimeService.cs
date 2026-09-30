@@ -2,6 +2,7 @@ using CinemaShowtimesApi.Contracts;
 using CinemaShowtimesApi.Domain;
 using CinemaShowtimesApi.Errors;
 using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Repositories.Interfaces;
 using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;

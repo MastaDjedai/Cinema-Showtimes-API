@@ -1,7 +1,7 @@
 using CinemaShowtimesApi.Contracts;
 using CinemaShowtimesApi.Domain;
 using CinemaShowtimesApi.Errors;
-using CinemaShowtimesApi.Repositories;
+using CinemaShowtimesApi.Repositories.Interfaces;
 using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;
@@ -69,6 +69,7 @@ public sealed class ReservationService(IReservationRepository reservationReposit
     private async Task<ReservationResponse> CreateReservationAsync(Showtime showtime, IReadOnlyList<Seat> seats, CancellationToken cancellationToken)
     {
         var now = UtcNow();
+
         var reservation = new Reservation
         {
             Id = Guid.NewGuid(),
@@ -131,6 +132,7 @@ public sealed class ReservationService(IReservationRepository reservationReposit
     private HashSet<Guid> GetOccupiedSeatIds(Showtime showtime)
     {
         var now = UtcNow();
+
         return showtime.Reservations
             .Where(r => r.Status == ReservationStatus.Confirmed || r.IsPending(now))
             .SelectMany(r => r.Seats)
@@ -141,6 +143,7 @@ public sealed class ReservationService(IReservationRepository reservationReposit
     private void EnsureSeatsAvailable(Showtime showtime, HashSet<Guid> requestedSeatIds)
     {
         var now = UtcNow();
+
         var sold = showtime.Reservations
             .Where(r => r.Status == ReservationStatus.Confirmed)
             .SelectMany(r => r.Seats)
