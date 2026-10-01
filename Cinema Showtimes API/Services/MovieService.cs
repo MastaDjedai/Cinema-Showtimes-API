@@ -1,6 +1,5 @@
 using CinemaShowtimesApi.Contracts;
 using CinemaShowtimesApi.Domain;
-using CinemaShowtimesApi.Repositories;
 using CinemaShowtimesApi.Repositories.Interfaces;
 using CinemaShowtimesApi.Services.Interfaces;
 

@@ -10,24 +10,26 @@ public sealed class ReservationService(IReservationRepository reservationReposit
 {
     public async Task<ReservationResponse> ReserveAsync(Guid showtimeId, IReadOnlyList<SeatDto> requestedSeats, CancellationToken cancellationToken)
     {
-        ValidateRequestedSeats(requestedSeats);
+        SeatSelection.ValidateNoDuplicates(requestedSeats);
+        var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
 
-        var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
-
-        var seats = ResolveSeats(showtime.Auditorium, requestedSeats);
-        EnsureSeatsAvailable(showtime, seats.Select(x => x.Id).ToHashSet());
+        var seats = SeatSelection.ResolveRequested(showtime, requestedSeats, UtcNow());
 
         return await CreateReservationAsync(showtime, seats, cancellationToken);
     }
 
     public async Task<ReservationResponse> ReserveContiguousAsync(Guid showtimeId, int seatCount, CancellationToken cancellationToken)
     {
-        var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
+        if (seatCount <= 0)
+        {
+            throw new BusinessRuleException("Seat count must be greater than zero.", "invalid_seat_count");
+        }
 
-        var occupied = GetOccupiedSeatIds(showtime);
-        var block = FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
+        var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
+
+        var now = UtcNow();
+        var occupied = SeatSelection.GetOccupiedSeatIds(showtime, now);
+        var block = SeatSelection.FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
             ?? throw new ConflictException($"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.", "no_contiguous_block");
 
         return await CreateReservationAsync(showtime, block, cancellationToken);
@@ -66,6 +68,13 @@ public sealed class ReservationService(IReservationRepository reservationReposit
             ?? throw new NotFoundException($"Showtime '{showtimeId}' was not found.", "showtime_not_found");
     }
 
+    private async Task<Showtime> PrepareShowtimeForBookingAsync(Guid showtimeId, CancellationToken cancellationToken)
+    {
+        var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
+        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
+        return showtime;
+    }
+
     private async Task<ReservationResponse> CreateReservationAsync(Showtime showtime, IReadOnlyList<Seat> seats, CancellationToken cancellationToken)
     {
         var now = UtcNow();
@@ -88,112 +97,6 @@ public sealed class ReservationService(IReservationRepository reservationReposit
         reservation.Showtime = showtime;
         return ToResponse(reservation);
     }
-
-    private static void ValidateRequestedSeats(IReadOnlyList<SeatDto> requestedSeats)
-    {
-        var duplicates = requestedSeats
-            .GroupBy(x => (x.Row.ToUpperInvariant(), x.Number))
-            .Where(g => g.Count() > 1)
-            .Select(g => $"{g.Key.Item1}{g.Key.Number}")
-            .ToList();
-
-        if (duplicates.Count > 0)
-        {
-            throw new BusinessRuleException($"Duplicate seats in the request: {string.Join(", ", duplicates)}.", "duplicate_seats");
-        }
-    }
-
-    private static List<Seat> ResolveSeats(Auditorium auditorium, IReadOnlyList<SeatDto> requestedSeats)
-    {
-        var lookup = auditorium.Seats.ToDictionary(x => (x.Row, x.Number));
-        var resolved = new List<Seat>(requestedSeats.Count);
-        var missing = new List<string>();
-
-        foreach (var requested in requestedSeats)
-        {
-            var row = requested.Row.ToUpperInvariant();
-            if (!lookup.TryGetValue((row, requested.Number), out var seat))
-            {
-                missing.Add($"{row}{requested.Number}");
-                continue;
-            }
-
-            resolved.Add(seat);
-        }
-
-        if (missing.Count > 0)
-        {
-            throw new BusinessRuleException($"Seats do not exist in {auditorium.Name}: {string.Join(", ", missing)}.", "unknown_seats");
-        }
-
-        return resolved;
-    }
-
-    private HashSet<Guid> GetOccupiedSeatIds(Showtime showtime)
-    {
-        var now = UtcNow();
-
-        return showtime.Reservations
-            .Where(r => r.Status == ReservationStatus.Confirmed || r.IsPending(now))
-            .SelectMany(r => r.Seats)
-            .Select(s => s.SeatId)
-            .ToHashSet();
-    }
-
-    private void EnsureSeatsAvailable(Showtime showtime, HashSet<Guid> requestedSeatIds)
-    {
-        var now = UtcNow();
-
-        var sold = showtime.Reservations
-            .Where(r => r.Status == ReservationStatus.Confirmed)
-            .SelectMany(r => r.Seats)
-            .Where(s => requestedSeatIds.Contains(s.SeatId))
-            .Select(s => s.Seat)
-            .ToList();
-
-        if (sold.Count > 0)
-        {
-            throw new ConflictException($"Seats already sold: {FormatSeats(sold)}.", "seats_already_sold");
-        }
-
-        var reserved = showtime.Reservations
-            .Where(r => r.IsPending(now))
-            .SelectMany(r => r.Seats)
-            .Where(s => requestedSeatIds.Contains(s.SeatId))
-            .Select(s => s.Seat)
-            .ToList();
-
-        if (reserved.Count > 0)
-        {
-            throw new ConflictException($"Seats currently reserved: {FormatSeats(reserved)}.", "seats_currently_reserved");
-        }
-    }
-
-    private static List<Seat>? FindContiguousBlock(IEnumerable<Seat> seats, HashSet<Guid> occupied, int seatCount)
-    {
-        var byRow = seats.GroupBy(s => s.Row).OrderBy(g => g.Key);
-
-        foreach (var row in byRow)
-        {
-            var available = row.Where(s => !occupied.Contains(s.Id)).OrderBy(s => s.Number).ToList();
-
-            for (var i = 0; i <= available.Count - seatCount; i++)
-            {
-                var candidate = available.Skip(i).Take(seatCount).ToList();
-                var isContiguous = candidate.Zip(candidate.Skip(1), (left, right) => right.Number == left.Number + 1).All(x => x);
-
-                if (isContiguous)
-                {
-                    return candidate;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static string FormatSeats(IEnumerable<Seat> seats) =>
-        string.Join(", ", seats.Where(s => s is not null).Select(s => $"{s.Row}{s.Number}").Distinct().OrderBy(x => x));
 
     private static ReservationResponse ToResponse(Reservation reservation)
     {

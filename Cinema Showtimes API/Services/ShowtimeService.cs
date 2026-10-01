@@ -1,17 +1,16 @@
 using CinemaShowtimesApi.Contracts;
 using CinemaShowtimesApi.Domain;
 using CinemaShowtimesApi.Errors;
-using CinemaShowtimesApi.Repositories;
 using CinemaShowtimesApi.Repositories.Interfaces;
 using CinemaShowtimesApi.Services.Interfaces;
 
 namespace CinemaShowtimesApi.Services;
 
-public sealed class ShowtimeService(IShowtimeRepository showtimes, TimeProvider timeProvider) : IShowtimeService
+public sealed class ShowtimeService(IShowtimeRepository showtimeRepository, TimeProvider timeProvider) : IShowtimeService
 {
     public async Task<IReadOnlyList<AuditoriumResponse>> ListAuditoriumsAsync(CancellationToken cancellationToken)
     {
-        var auditoriums = await showtimes.ListAuditoriumsWithSeatsAsync(cancellationToken);
+        var auditoriums = await showtimeRepository.ListAuditoriumsWithSeatsAsync(cancellationToken);
 
         return auditoriums.Select(a => new AuditoriumResponse
         {
@@ -28,10 +27,10 @@ public sealed class ShowtimeService(IShowtimeRepository showtimes, TimeProvider 
             throw new BusinessRuleException("MovieId and AuditoriumId are required.", "missing_ids");
         }
 
-        var movie = await showtimes.GetMovieByIdAsync(request.MovieId, cancellationToken)
+        var movie = await showtimeRepository.GetMovieByIdAsync(request.MovieId, cancellationToken)
             ?? throw new NotFoundException($"Movie '{request.MovieId}' was not found.", "movie_not_found");
 
-        var auditorium = await showtimes.GetAuditoriumByIdAsync(request.AuditoriumId, cancellationToken)
+        var auditorium = await showtimeRepository.GetAuditoriumByIdAsync(request.AuditoriumId, cancellationToken)
             ?? throw new NotFoundException($"Auditorium '{request.AuditoriumId}' was not found.", "auditorium_not_found");
 
         if (request.StartTime <= timeProvider.GetUtcNow())
@@ -39,7 +38,7 @@ public sealed class ShowtimeService(IShowtimeRepository showtimes, TimeProvider 
             throw new BusinessRuleException("Showtime start time must be in the future.", "showtime_in_the_past");
         }
 
-        if (await showtimes.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), cancellationToken))
+        if (await showtimeRepository.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), cancellationToken))
         {
             throw new ConflictException("This auditorium already has a showtime at the requested start time.", "showtime_overlap");
         }
@@ -52,7 +51,7 @@ public sealed class ShowtimeService(IShowtimeRepository showtimes, TimeProvider 
             StartTime = request.StartTime.ToUniversalTime()
         };
 
-        await showtimes.AddAsync(showtime, cancellationToken);
+        await showtimeRepository.AddAsync(showtime, cancellationToken);
 
         return new ShowtimeResponse
         {
