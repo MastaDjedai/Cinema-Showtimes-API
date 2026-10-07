@@ -5,13 +5,15 @@ namespace CinemaShowtimesApi.Contracts;
 public sealed class CreateShowtimeRequest
 {
     [Required]
-    public Guid MovieId { get; set; }
+    [NotEmptyGuid]
+    public Guid? MovieId { get; set; }
 
     [Required]
-    public Guid AuditoriumId { get; set; }
+    [NotEmptyGuid]
+    public Guid? AuditoriumId { get; set; }
 
     [Required]
-    public DateTimeOffset StartTime { get; set; }
+    public DateTimeOffset? StartTime { get; set; }
 }
 
 public sealed class ShowtimeResponse
@@ -22,6 +24,7 @@ public sealed class ShowtimeResponse
     public required Guid AuditoriumId { get; set; }
     public required string AuditoriumName { get; set; }
     public required DateTimeOffset StartTime { get; set; }
+    public required DateTimeOffset EndTime { get; set; }
 }
 
 public sealed class AuditoriumResponse

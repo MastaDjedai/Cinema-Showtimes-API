@@ -4,15 +4,11 @@ using CinemaShowtimesApi.Errors;
 
 namespace CinemaShowtimesApi.Services;
 
-/// <summary>
-/// Resolves requested seats and applies the seat availability rules for a showtime.
-/// </summary>
 internal static class SeatSelection
 {
     public static List<Seat> ResolveRequested(Showtime showtime, IReadOnlyList<SeatDto> requestedSeats, DateTime utcNow)
     {
-        var seatsByLocation = showtime.Auditorium.Seats
-            .ToDictionary(seat => (seat.Row.ToUpperInvariant(), seat.Number));
+        var seatsByLocation = showtime.Auditorium.Seats.ToDictionary(seat => (seat.Row.ToUpperInvariant(), seat.Number));
         var resolvedSeats = new List<Seat>(requestedSeats.Count);
         var missingSeats = new List<string>();
 
@@ -30,30 +26,21 @@ internal static class SeatSelection
 
         if (missingSeats.Count > 0)
         {
-            throw new BusinessRuleException(
-                $"Seats do not exist in {showtime.Auditorium.Name}: {string.Join(", ", missingSeats)}.",
-                "unknown_seats");
+            throw new BusinessRuleException($"Seats do not exist in {showtime.Auditorium.Name}: {string.Join(", ", missingSeats)}.", "unknown_seats");
         }
 
         EnsureAvailable(showtime, resolvedSeats.Select(seat => seat.Id).ToHashSet(), utcNow);
         return resolvedSeats;
     }
 
-    public static HashSet<Guid> GetOccupiedSeatIds(Showtime showtime, DateTime utcNow) => showtime.Reservations
-        .Where(reservation => reservation.Status == ReservationStatus.Confirmed || reservation.IsPending(utcNow))
-        .SelectMany(reservation => reservation.Seats)
-        .Select(reservationSeat => reservationSeat.SeatId)
-        .ToHashSet();
+    public static HashSet<Guid> GetOccupiedSeatIds(Showtime showtime, DateTime utcNow) =>
+        showtime.Occupancies.Where(occupancy => occupancy.IsOccupied(utcNow)).Select(occupancy => occupancy.SeatId).ToHashSet();
 
     public static List<Seat>? FindContiguousBlock(IEnumerable<Seat> seats, HashSet<Guid> occupied, int seatCount)
     {
         foreach (var row in seats.GroupBy(seat => seat.Row).OrderBy(group => group.Key))
         {
-            var available = row
-                .Where(seat => !occupied.Contains(seat.Id))
-                .OrderBy(seat => seat.Number)
-                .ToList();
-
+            var available = row.Where(seat => !occupied.Contains(seat.Id)).OrderBy(seat => seat.Number).ToList();
             var block = new List<Seat>(seatCount);
             foreach (var seat in available)
             {
@@ -83,34 +70,20 @@ internal static class SeatSelection
 
         if (duplicates.Count > 0)
         {
-            throw new BusinessRuleException(
-                $"Duplicate seats in the request: {string.Join(", ", duplicates)}.",
-                "duplicate_seats");
+            throw new BusinessRuleException($"Duplicate seats in the request: {string.Join(", ", duplicates)}.", "duplicate_seats");
         }
     }
 
-    private static void EnsureAvailable(Showtime showtime, HashSet<Guid> requestedSeatIds, DateTime utcNow)
+    public static void EnsureAvailable(Showtime showtime, HashSet<Guid> requestedSeatIds, DateTime utcNow)
     {
-        var matchingReservations = showtime.Reservations
-            .Where(reservation => reservation.Status == ReservationStatus.Confirmed || reservation.IsPending(utcNow))
-            .SelectMany(reservation => reservation.Seats
-                .Where(seat => requestedSeatIds.Contains(seat.SeatId))
-                .Select(seat => (reservation.Status, seat.Seat)))
-            .ToList();
-
-        var sold = matchingReservations
-            .Where(match => match.Status == ReservationStatus.Confirmed)
-            .Select(match => match.Seat)
-            .ToList();
+        var matches = showtime.Occupancies.Where(occupancy => requestedSeatIds.Contains(occupancy.SeatId) && occupancy.IsOccupied(utcNow)).ToList();
+        var sold = matches.Where(occupancy => occupancy.Status == ShowtimeSeatStatus.Sold).Select(occupancy => occupancy.Seat).ToList();
         if (sold.Count > 0)
         {
             throw new ConflictException($"Seats already sold: {FormatSeats(sold)}.", "seats_already_sold");
         }
 
-        var reserved = matchingReservations
-            .Where(match => match.Status == ReservationStatus.Pending)
-            .Select(match => match.Seat)
-            .ToList();
+        var reserved = matches.Where(occupancy => occupancy.Status == ShowtimeSeatStatus.Held).Select(occupancy => occupancy.Seat).ToList();
         if (reserved.Count > 0)
         {
             throw new ConflictException($"Seats currently reserved: {FormatSeats(reserved)}.", "seats_currently_reserved");
@@ -118,6 +91,5 @@ internal static class SeatSelection
     }
 
     private static string FormatSeats(IEnumerable<Seat> seats) =>
-        string.Join(", ", seats.DistinctBy(seat => seat.Id).OrderBy(seat => seat.Row).ThenBy(seat => seat.Number)
-            .Select(seat => $"{seat.Row}{seat.Number}"));
+        string.Join(", ", seats.DistinctBy(seat => seat.Id).OrderBy(seat => seat.Row).ThenBy(seat => seat.Number).Select(seat => $"{seat.Row}{seat.Number}"));
 }

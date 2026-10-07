@@ -15,13 +15,15 @@ cd "Cinema Showtimes API"
 dotnet run
 ```
 
-The API listens on `http://localhost:5208` (see `Properties/launchSettings.json`). SQLite database file `cinema.db` is created next to the app on first start.
+The API listens on `http://localhost:5208` (see `Properties/launchSettings.json`). On startup EF Core **applies migrations** and seeds movies/auditoriums. SQLite file `cinema.db` is created next to the app.
+
+If you still have an older `cinema.db` created with `EnsureCreated()`, delete it (and `cinema.db-wal` / `cinema.db-shm`) before running — that file has no migration history.
 
 OpenAPI document (Development): `http://localhost:5208/openapi/v1.json`
 
 ## Seeded data
 
-On startup the database is created (if missing) and seeded with:
+On startup the database is migrated (if needed) and seeded with:
 
 - Movies: *The Matrix*, *Amelie*, *Spirited Away*, *Dune: Part Two*, *Parasite*
 - Auditoriums:

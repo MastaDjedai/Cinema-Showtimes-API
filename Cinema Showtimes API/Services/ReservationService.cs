@@ -8,77 +8,95 @@ namespace CinemaShowtimesApi.Services;
 
 public sealed class ReservationService(IReservationRepository reservationRepository, TimeProvider timeProvider) : IReservationService
 {
-    public async Task<ReservationResponse> ReserveAsync(Guid showtimeId, IReadOnlyList<SeatDto> requestedSeats, CancellationToken cancellationToken)
+    public Task<ReservationResponse> ReserveAsync(Guid showtimeId, IReadOnlyList<SeatDto> requestedSeats, CancellationToken cancellationToken)
     {
         SeatSelection.ValidateNoDuplicates(requestedSeats);
-        var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
-
-        var seats = SeatSelection.ResolveRequested(showtime, requestedSeats, UtcNow());
-
-        return await CreateReservationAsync(showtime, seats, cancellationToken);
+        return reservationRepository.ExecuteInTransactionAsync(async () =>
+        {
+            var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
+            var seats = SeatSelection.ResolveRequested(showtime, requestedSeats, UtcNow());
+            return await CreateReservationAsync(showtime, seats, cancellationToken);
+        }, cancellationToken);
     }
 
-    public async Task<ReservationResponse> ReserveContiguousAsync(Guid showtimeId, int seatCount, CancellationToken cancellationToken)
+    public Task<ReservationResponse> ReserveContiguousAsync(Guid showtimeId, int seatCount, CancellationToken cancellationToken)
     {
         if (seatCount <= 0)
         {
             throw new BusinessRuleException("Seat count must be greater than zero.", "invalid_seat_count");
         }
 
-        var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
-
-        var now = UtcNow();
-        var occupied = SeatSelection.GetOccupiedSeatIds(showtime, now);
-        var block = SeatSelection.FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
-            ?? throw new ConflictException($"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.", "no_contiguous_block");
-
-        return await CreateReservationAsync(showtime, block, cancellationToken);
+        return reservationRepository.ExecuteInTransactionAsync(async () =>
+        {
+            var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
+            var now = UtcNow();
+            var occupied = SeatSelection.GetOccupiedSeatIds(showtime, now);
+            var block = SeatSelection.FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
+                ?? throw new ConflictException($"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.", "no_contiguous_block");
+            return await CreateReservationAsync(showtime, block, cancellationToken);
+        }, cancellationToken);
     }
 
-    public async Task<ReservationResponse> ConfirmAsync(Guid reservationReference, CancellationToken cancellationToken)
+    public Task<ReservationResponse> ConfirmAsync(Guid reservationReference, CancellationToken cancellationToken)
     {
-        var now = UtcNow();
-        var reservation = await reservationRepository.GetByIdForConfirmAsync(reservationReference, cancellationToken)
-            ?? throw new NotFoundException($"Reservation '{reservationReference}' was not found.", "reservation_not_found");
-
-        if (reservation.Status == ReservationStatus.Confirmed)
+        return reservationRepository.ExecuteInTransactionAsync(async () =>
         {
-            throw new ConflictException("This reservation has already been confirmed.", "already_confirmed");
-        }
+            var now = UtcNow();
+            var reservation = await reservationRepository.GetByIdForConfirmAsync(reservationReference, cancellationToken)
+                ?? throw new NotFoundException($"Reservation '{reservationReference}' was not found.", "reservation_not_found");
 
-        if (reservation.Status == ReservationStatus.Expired || reservation.ExpiresAt <= now)
-        {
-            if (reservation.Status == ReservationStatus.Pending)
+            if (reservation.Status == ReservationStatus.Confirmed)
             {
-                reservation.Status = ReservationStatus.Expired;
-                await reservationRepository.SaveChangesAsync(cancellationToken);
+                throw new ConflictException("This reservation has already been confirmed.", "already_confirmed");
             }
 
-            throw new ConflictException("This reservation has expired and can no longer be confirmed.", "reservation_expired");
-        }
+            await reservationRepository.ExpirePendingHoldsAsync(reservation.ShowtimeId, now, cancellationToken);
 
-        reservation.Status = ReservationStatus.Confirmed;
-        await reservationRepository.SaveChangesAsync(cancellationToken);
-        return ToResponse(reservation);
-    }
+            if (reservation.Status == ReservationStatus.Expired || reservation.ExpiresAt <= now)
+            {
+                if (reservation.Status == ReservationStatus.Pending)
+                {
+                    reservation.Status = ReservationStatus.Expired;
+                    await reservationRepository.SaveChangesAsync(cancellationToken);
+                }
 
-    private async Task<Showtime> LoadShowtimeAsync(Guid showtimeId, CancellationToken cancellationToken)
-    {
-        return await reservationRepository.GetShowtimeForBookingAsync(showtimeId, cancellationToken)
-            ?? throw new NotFoundException($"Showtime '{showtimeId}' was not found.", "showtime_not_found");
+                throw new ConflictException("This reservation has expired and can no longer be confirmed.", "reservation_expired");
+            }
+
+            EnsureShowtimeNotStarted(reservation.Showtime);
+
+            reservation.Status = ReservationStatus.Confirmed;
+            foreach (var occupancy in reservation.Showtime.Occupancies.Where(x => x.ReservationId == reservation.Id))
+            {
+                occupancy.Sell();
+            }
+
+            await reservationRepository.SaveChangesAsync(cancellationToken);
+            return ToResponse(reservation);
+        }, cancellationToken);
     }
 
     private async Task<Showtime> PrepareShowtimeForBookingAsync(Guid showtimeId, CancellationToken cancellationToken)
     {
-        var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
+        var showtime = await reservationRepository.GetShowtimeForBookingAsync(showtimeId, cancellationToken)
+            ?? throw new NotFoundException($"Showtime '{showtimeId}' was not found.", "showtime_not_found");
+
+        EnsureShowtimeNotStarted(showtime);
+        await reservationRepository.ExpirePendingHoldsAsync(showtimeId, UtcNow(), cancellationToken);
         return showtime;
+    }
+
+    private void EnsureShowtimeNotStarted(Showtime showtime)
+    {
+        if (showtime.StartTime <= timeProvider.GetUtcNow())
+        {
+            throw new BusinessRuleException("This showtime has already started.", "showtime_already_started");
+        }
     }
 
     private async Task<ReservationResponse> CreateReservationAsync(Showtime showtime, IReadOnlyList<Seat> seats, CancellationToken cancellationToken)
     {
         var now = UtcNow();
-
         var reservation = new Reservation
         {
             Id = Guid.NewGuid(),
@@ -91,9 +109,12 @@ public sealed class ReservationService(IReservationRepository reservationReposit
         foreach (var seat in seats)
         {
             reservation.Seats.Add(new ReservationSeat { SeatId = seat.Id, Seat = seat });
+            var occupancy = showtime.Occupancies.First(x => x.SeatId == seat.Id);
+            occupancy.Hold(reservation.Id, reservation.ExpiresAt);
         }
 
-        await reservationRepository.AddAsync(reservation, cancellationToken);
+        reservationRepository.Add(reservation);
+        await reservationRepository.SaveChangesAsync(cancellationToken);
         reservation.Showtime = showtime;
         return ToResponse(reservation);
     }

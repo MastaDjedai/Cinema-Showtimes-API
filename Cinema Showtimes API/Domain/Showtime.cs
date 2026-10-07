@@ -6,8 +6,10 @@ public class Showtime
     public Guid MovieId { get; set; }
     public Guid AuditoriumId { get; set; }
     public DateTimeOffset StartTime { get; set; }
+    public DateTimeOffset EndTime { get; set; }
 
     public Movie Movie { get; set; } = null!;
     public Auditorium Auditorium { get; set; } = null!;
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public ICollection<ShowtimeSeat> Occupancies { get; set; } = new List<ShowtimeSeat>();
 }

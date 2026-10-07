@@ -12,8 +12,8 @@ public class ShowtimeServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 30, 12, 0, 0, TimeSpan.Zero);
 
-    private Mock<IShowtimeRepository> _repository;
-    private ShowtimeService _service;
+    private Mock<IShowtimeRepository> _repository = null!;
+    private ShowtimeService _service = null!;
 
     [SetUp]
     public void SetUp()
@@ -27,37 +27,32 @@ public class ShowtimeServiceTests
     [Test]
     public async Task CreateAsync_WhenStartTimeIsInPast_ThrowsBusinessRuleException()
     {
-        // Arrange
-        var request = new CreateShowtimeRequest
-        {
-            MovieId = Guid.NewGuid(),
-            AuditoriumId = Guid.NewGuid(),
-            StartTime = Now.AddHours(-1)
-        };
+        var request = new CreateShowtimeRequest { MovieId = Guid.NewGuid(), AuditoriumId = Guid.NewGuid(), StartTime = Now.AddHours(-1) };
+        SetupMovieAndHall(request);
 
-        _repository.Setup(x => x.GetMovieByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Movie
-            {
-                Id = request.MovieId,
-                Title = "Avatar",
-                Category = "Sci-Fi",
-                Year = 2009
-            });
+        var act = () => _service.CreateAsync(request, CancellationToken.None);
 
-        _repository.Setup(x => x.GetAuditoriumByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Auditorium
-            {
-                Id = request.AuditoriumId,
-                Name = "Hall 1"
-            });
-        // Act
-        Func<Task> act = async() => await _service.CreateAsync(request, CancellationToken.None);
+        await act.Should().ThrowAsync<BusinessRuleException>().Where(ex => ex.ErrorCode == "showtime_in_the_past");
+    }
 
-        // Assert
-        await act.Should().ThrowAsync<BusinessRuleException>();
+    [Test]
+    public async Task CreateAsync_WhenAnotherShowOverlapsDuration_ThrowsConflict()
+    {
+        var request = new CreateShowtimeRequest { MovieId = Guid.NewGuid(), AuditoriumId = Guid.NewGuid(), StartTime = Now.AddHours(1) };
+        SetupMovieAndHall(request, durationMinutes: 136);
+        _repository.Setup(x => x.HasOverlappingShowtimeAsync(request.AuditoriumId!.Value, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        _repository.Verify(x => x.GetMovieByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+        var act = () => _service.CreateAsync(request, CancellationToken.None);
 
-        _repository.Verify(x => x.GetAuditoriumByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+        await act.Should().ThrowAsync<ConflictException>().Where(ex => ex.ErrorCode == "showtime_overlap");
+        _repository.Verify(x => x.HasOverlappingShowtimeAsync(request.AuditoriumId!.Value, request.StartTime!.Value, request.StartTime.Value.AddMinutes(136), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private void SetupMovieAndHall(CreateShowtimeRequest request, int durationMinutes = 120)
+    {
+        _repository.Setup(x => x.GetMovieByIdAsync(request.MovieId!.Value, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Movie { Id = request.MovieId!.Value, Title = "The Matrix", Category = "Sci-Fi", Year = 1999, DurationMinutes = durationMinutes });
+        _repository.Setup(x => x.GetAuditoriumByIdAsync(request.AuditoriumId!.Value, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Auditorium { Id = request.AuditoriumId!.Value, Name = "Hall 1" });
     }
 }

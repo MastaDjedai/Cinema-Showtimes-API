@@ -22,25 +22,25 @@ public sealed class ShowtimeService(IShowtimeRepository showtimeRepository, Time
 
     public async Task<ShowtimeResponse> CreateAsync(CreateShowtimeRequest request, CancellationToken cancellationToken)
     {
-        if (request.MovieId == Guid.Empty || request.AuditoriumId == Guid.Empty)
-        {
-            throw new BusinessRuleException("MovieId and AuditoriumId are required.", "missing_ids");
-        }
+        var movieId = request.MovieId!.Value;
+        var auditoriumId = request.AuditoriumId!.Value;
+        var startTime = request.StartTime!.Value.ToUniversalTime();
 
-        var movie = await showtimeRepository.GetMovieByIdAsync(request.MovieId, cancellationToken)
-            ?? throw new NotFoundException($"Movie '{request.MovieId}' was not found.", "movie_not_found");
+        var movie = await showtimeRepository.GetMovieByIdAsync(movieId, cancellationToken)
+            ?? throw new NotFoundException($"Movie '{movieId}' was not found.", "movie_not_found");
 
-        var auditorium = await showtimeRepository.GetAuditoriumByIdAsync(request.AuditoriumId, cancellationToken)
-            ?? throw new NotFoundException($"Auditorium '{request.AuditoriumId}' was not found.", "auditorium_not_found");
+        var auditorium = await showtimeRepository.GetAuditoriumByIdAsync(auditoriumId, cancellationToken)
+            ?? throw new NotFoundException($"Auditorium '{auditoriumId}' was not found.", "auditorium_not_found");
 
-        if (request.StartTime <= timeProvider.GetUtcNow())
+        if (startTime <= timeProvider.GetUtcNow())
         {
             throw new BusinessRuleException("Showtime start time must be in the future.", "showtime_in_the_past");
         }
 
-        if (await showtimeRepository.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), cancellationToken))
+        var endTime = startTime.AddMinutes(movie.DurationMinutes);
+        if (await showtimeRepository.HasOverlappingShowtimeAsync(auditoriumId, startTime, endTime, cancellationToken))
         {
-            throw new ConflictException("This auditorium already has a showtime at the requested start time.", "showtime_overlap");
+            throw new ConflictException("This auditorium already has a showtime that overlaps the requested time.", "showtime_overlap");
         }
 
         var showtime = new Showtime
@@ -48,7 +48,8 @@ public sealed class ShowtimeService(IShowtimeRepository showtimeRepository, Time
             Id = Guid.NewGuid(),
             MovieId = movie.Id,
             AuditoriumId = auditorium.Id,
-            StartTime = request.StartTime.ToUniversalTime()
+            StartTime = startTime,
+            EndTime = endTime
         };
 
         await showtimeRepository.AddAsync(showtime, cancellationToken);
@@ -60,7 +61,8 @@ public sealed class ShowtimeService(IShowtimeRepository showtimeRepository, Time
             MovieTitle = movie.Title,
             AuditoriumId = auditorium.Id,
             AuditoriumName = auditorium.Name,
-            StartTime = showtime.StartTime
+            StartTime = showtime.StartTime,
+            EndTime = showtime.EndTime
         };
     }
 }
