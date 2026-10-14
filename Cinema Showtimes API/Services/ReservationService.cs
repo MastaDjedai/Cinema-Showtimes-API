@@ -11,9 +11,10 @@ public sealed class ReservationService(IReservationRepository reservationReposit
     public async Task<ReservationResponse> ReserveAsync(Guid showtimeId, IReadOnlyList<SeatDto> requestedSeats, CancellationToken cancellationToken)
     {
         SeatSelection.ValidateNoDuplicates(requestedSeats);
+
         var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
 
-        var seats = SeatSelection.ResolveRequested(showtime, requestedSeats, UtcNow());
+        var seats = SeatSelection.ResolveRequested(showtime, requestedSeats);
 
         return await CreateReservationAsync(showtime, seats, cancellationToken);
     }
@@ -22,15 +23,19 @@ public sealed class ReservationService(IReservationRepository reservationReposit
     {
         if (seatCount <= 0)
         {
-            throw new BusinessRuleException("Seat count must be greater than zero.", "invalid_seat_count");
+            throw new BusinessRuleException(
+                "Seat count must be greater than zero.",
+                "invalid_seat_count");
         }
 
         var showtime = await PrepareShowtimeForBookingAsync(showtimeId, cancellationToken);
 
-        var now = UtcNow();
-        var occupied = SeatSelection.GetOccupiedSeatIds(showtime, now);
-        var block = SeatSelection.FindContiguousBlock(showtime.Auditorium.Seats, occupied, seatCount)
-            ?? throw new ConflictException($"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.", "no_contiguous_block");
+        var claimedSeatIds = await reservationRepository.GetClaimedSeatIdsAsync(showtimeId, cancellationToken);
+
+        var block = SeatSelection.FindContiguousBlock(showtime.Auditorium.Seats, claimedSeatIds, seatCount)
+            ?? throw new ConflictException(
+                $"No contiguous block of {seatCount} seats is available in {showtime.Auditorium.Name}.",
+                "no_contiguous_block");
 
         return await CreateReservationAsync(showtime, block, cancellationToken);
     }
@@ -70,9 +75,7 @@ public sealed class ReservationService(IReservationRepository reservationReposit
 
     private async Task<Showtime> PrepareShowtimeForBookingAsync(Guid showtimeId, CancellationToken cancellationToken)
     {
-        var showtime = await LoadShowtimeAsync(showtimeId, cancellationToken);
-        await reservationRepository.ExpirePendingAsync(showtimeId, UtcNow(), cancellationToken);
-        return showtime;
+        return await LoadShowtimeAsync(showtimeId, cancellationToken);
     }
 
     private async Task<ReservationResponse> CreateReservationAsync(Showtime showtime, IReadOnlyList<Seat> seats, CancellationToken cancellationToken)
@@ -93,7 +96,8 @@ public sealed class ReservationService(IReservationRepository reservationReposit
             reservation.Seats.Add(new ReservationSeat { SeatId = seat.Id, Seat = seat });
         }
 
-        await reservationRepository.AddAsync(reservation, cancellationToken);
+        reservation = await reservationRepository.CreateReservationIfAvailableAsync(reservation, now, cancellationToken);
+
         reservation.Showtime = showtime;
         return ToResponse(reservation);
     }

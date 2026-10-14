@@ -11,6 +11,7 @@ public class CinemaDbContext(DbContextOptions<CinemaDbContext> options) : DbCont
     public DbSet<Showtime> Showtimes => Set<Showtime>();
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<ReservationSeat> ReservationSeats => Set<ReservationSeat>();
+    public DbSet<ShowtimeSeatClaim> ShowtimeSeatClaims => Set<ShowtimeSeatClaim>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -73,6 +74,26 @@ public class CinemaDbContext(DbContextOptions<CinemaDbContext> options) : DbCont
                 .WithMany(x => x.ReservationSeats)
                 .HasForeignKey(x => x.SeatId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ShowtimeSeatClaim>(entity =>
+        {
+            entity.HasKey(x => new { x.ShowtimeId, x.SeatId });
+
+            entity.HasOne<Showtime>()
+                .WithMany()
+                .HasForeignKey(x => x.ShowtimeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<Seat>()
+                .WithMany()
+                .HasForeignKey(x => x.SeatId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<Reservation>()
+                .WithMany()
+                .HasForeignKey(x => x.ReservationId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

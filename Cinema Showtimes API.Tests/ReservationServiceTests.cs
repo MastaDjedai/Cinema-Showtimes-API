@@ -21,7 +21,7 @@ public class ReservationServiceTests
     }
 
     [Test]
-    public void ReserveAsync_WhenSeatsContainDuplicate_ThrowsBusinessRuleException()
+    public async Task ReserveAsync_WhenSeatsContainDuplicate_ThrowsBusinessRuleException()
     {
         // Arrange
         var showtimeId = Guid.NewGuid();
@@ -35,7 +35,7 @@ public class ReservationServiceTests
         Func<Task> act = async() => await _service.ReserveAsync(showtimeId, seats, CancellationToken.None);
 
         // Assert
-        act.Should().ThrowAsync<BusinessRuleException>();
+        await act.Should().ThrowAsync<BusinessRuleException>();
 
         _repository.Verify(x => x.GetShowtimeForBookingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
