@@ -12,7 +12,4 @@ public class Reservation
 
     public Showtime Showtime { get; set; } = null!;
     public ICollection<ReservationSeat> Seats { get; set; } = new List<ReservationSeat>();
-
-    public bool IsPending(DateTime utcNow) =>
-        Status == ReservationStatus.Pending && ExpiresAt > utcNow;
 }

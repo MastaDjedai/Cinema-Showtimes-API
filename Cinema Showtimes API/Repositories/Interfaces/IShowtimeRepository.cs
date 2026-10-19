@@ -10,7 +10,7 @@ public interface IShowtimeRepository
 
     Task<Auditorium?> GetAuditoriumByIdAsync(Guid auditoriumId, CancellationToken cancellationToken);
 
-    Task<bool> HasShowtimeAtAsync(Guid auditoriumId, DateTimeOffset startTime, CancellationToken cancellationToken);
+    Task<bool> HasShowtimeAtAsync(Guid auditoriumId, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken);
 
     Task AddAsync(Showtime showtime, CancellationToken cancellationToken);
 }

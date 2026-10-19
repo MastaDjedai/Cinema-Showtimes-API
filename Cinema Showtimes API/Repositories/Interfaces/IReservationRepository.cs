@@ -13,4 +13,10 @@ public interface IReservationRepository
     Task AddAsync(Reservation reservation, CancellationToken cancellationToken);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    Task<HashSet<Guid>> GetClaimedSeatIdsAsync(Guid showtimeId, CancellationToken cancellationToken);
+
+    Task AddWithClaimsAsync(Reservation reservation, CancellationToken cancellationToken);
+
+    Task<Reservation> CreateReservationIfAvailableAsync(Reservation reservation, DateTime utcNow, CancellationToken cancellationToken);
 }

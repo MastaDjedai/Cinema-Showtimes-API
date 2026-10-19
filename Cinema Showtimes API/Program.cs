@@ -16,7 +16,6 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<CinemaDbContext>();
-    db.Database.EnsureCreated();
     SeedData.Apply(db);
 }
 
@@ -34,3 +33,5 @@ app.UseSwaggerUI();
 
 app.MapControllers();
 app.Run();
+
+public partial class Program { }
