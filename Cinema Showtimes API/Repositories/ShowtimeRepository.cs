@@ -22,9 +22,10 @@ public sealed class ShowtimeRepository(CinemaDbContext db) : IShowtimeRepository
         return db.Auditoriums.FirstOrDefaultAsync(x => x.Id == auditoriumId, cancellationToken);
     }
 
-    public Task<bool> HasShowtimeAtAsync(Guid auditoriumId, DateTimeOffset startTime, CancellationToken cancellationToken)
+    public Task<bool> HasShowtimeAtAsync(Guid auditoriumId, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken)
     {
-        return db.Showtimes.AnyAsync(x => x.AuditoriumId == auditoriumId && x.StartTime == startTime, cancellationToken);
+        return db.Showtimes.Where(x => x.AuditoriumId == auditoriumId)
+            .AnyAsync(x => x.StartTime < endTime && x.StartTime.AddMinutes(x.Movie.DurationMinutes) > startTime, cancellationToken);
     }
 
     public async Task AddAsync(Showtime showtime, CancellationToken cancellationToken)

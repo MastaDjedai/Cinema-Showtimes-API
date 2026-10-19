@@ -19,22 +19,21 @@ public sealed class ReservationConcurrencyIntegrationTests
     private HttpClient _client = null!;
 
     [SetUp]
-    public void SetUp()
+    public async Task SetUp()
     {
         _databasePath = Path.Combine(Path.GetTempPath(), $"cinema-race-{Guid.NewGuid():N}.db");
         _connectionString = $"Data Source={_databasePath};Default Timeout=30;Pooling=False";
 
-        var options = new DbContextOptionsBuilder<CinemaDbContext>()
-            .UseSqlite(_connectionString)
-            .Options;
+        var options = new DbContextOptionsBuilder<CinemaDbContext>().UseSqlite(_connectionString).Options;
 
         using (var db = new CinemaDbContext(options))
         {
-            db.Database.EnsureCreated();
+            await db.Database.MigrateAsync();
         }
 
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder => builder.UseSetting("ConnectionStrings:Cinema", _connectionString));
+
         _client = _factory.CreateClient();
     }
 

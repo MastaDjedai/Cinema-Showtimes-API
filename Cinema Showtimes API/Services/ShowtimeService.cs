@@ -38,9 +38,9 @@ public sealed class ShowtimeService(IShowtimeRepository showtimeRepository, Time
             throw new BusinessRuleException("Showtime start time must be in the future.", "showtime_in_the_past");
         }
 
-        if (await showtimeRepository.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), cancellationToken))
+        if (await showtimeRepository.HasShowtimeAtAsync(request.AuditoriumId, request.StartTime.ToUniversalTime(), request.StartTime.AddMinutes(movie.DurationMinutes).ToUniversalTime(), cancellationToken))
         {
-            throw new ConflictException("This auditorium already has a showtime at the requested start time.", "showtime_overlap");
+            throw new ConflictException("This auditorium already has an overlap with different showtime.", "showtime_overlap");
         }
 
         var showtime = new Showtime
